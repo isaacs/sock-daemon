@@ -1,0 +1,50 @@
+{
+  "name": "sock-daemon",
+  "version": "0.0.0-0",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "signal-exit": "^4.1.0",
+    "socket-post-message": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.7",
+    "prettier": "^2.8.8",
+    "tap": "^18.5.2",
+    "tshy": "^1.6.0",
+    "typedoc": "^0.25.2"
+  },
+  "prettier": {
+    "semi": false,
+    "printWidth": 70,
+    "tabWidth": 2,
+    "useTabs": false,
+    "singleQuote": true,
+    "jsxSingleQuote": false,
+    "bracketSameLine": true,
+    "arrowParens": "avoid",
+    "endOfLine": "lf"
+  },
+  "tshy": {
+    "exports": {
+      "./package.json": "./package.json"
+    }
+  },
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "type": "module",
+  "scripts": {
+    "prepare": "tshy",
+    "presnap": "npm run prepare",
+    "pretest": "npm run prepare",
+    "snap": "tap",
+    "test": "tap",
+    "preversion": "npm test",
+    "postversion": "npm publish",
+    "prepublishOnly": "git push origin --follow-tags",
+    "format": "prettier --write . --loglevel warn --cache",
+    "typedoc": "typedoc"
+  }
+}

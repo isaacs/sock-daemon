@@ -1,0 +1,8 @@
+/node_modules
+/example
+/.github
+/dist
+/.tap
+/.env
+/tap-snapshots
+/.tshy
