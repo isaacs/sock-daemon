@@ -1,9 +1,11 @@
 import { spawn } from 'child_process'
 import { constants, openSync } from 'fs'
+import { mkdirp } from 'mkdirp'
 import { connect, Socket } from 'net'
 import { resolve } from 'path'
 import { message, Reader } from 'socket-post-message'
 import { fileURLToPath } from 'url'
+import { isPong, ping, Ping } from './ping.js'
 import type { MessageBase } from './server.js'
 
 const pid = process.pid
@@ -20,12 +22,17 @@ export class ClientRequest<
   #reject?: (er: any) => void
   #signal?: AbortSignal
   #onAbort: (er: any) => void
+  #onFinish: () => void
   response?: Response
   request: Request
   promise: Promise<Response>
   id: string
 
-  constructor(request: Request, signal?: AbortSignal) {
+  constructor(
+    request: Request,
+    signal: AbortSignal | undefined,
+    onFinish: () => void
+  ) {
     this.request = request
     this.id = request.id
     this.promise = new Promise<Response>((resolve, reject) => {
@@ -34,11 +41,14 @@ export class ClientRequest<
     })
     this.#signal = signal
     this.#onAbort = (er: any) => this.reject(er)
+    this.#onFinish = onFinish
     signal?.addEventListener('abort', this.#onAbort)
   }
 
   reject(er: any) {
+    /* c8 ignore next */
     if (!this.#reject) return
+    this.#onFinish()
     const reject = this.#reject
     this.#reject = undefined
     this.#resolve = undefined
@@ -47,7 +57,9 @@ export class ClientRequest<
   }
 
   resolve(r: Response) {
+    /* c8 ignore next */
     if (!this.#resolve) return
+    this.#onFinish()
     const resolve = this.#resolve
     this.response = r
     this.#resolve = undefined
@@ -70,21 +82,27 @@ export abstract class SockDaemonClient<
   Response extends MessageBase = MessageBase
 > {
   #connected: boolean = false
-  #socket?: Socket
+  #connection?: Socket
   #reader?: Reader
   #clientID = `${pid}-${clientID++}`
   #msgID = 0
   #requests = new Map<string, ClientRequest<Request, Response>>()
   #path: string
-  #socketFile: string
+  #socket: string
   #logFile: string
+  #pidFile: string
+
+  #didPing = false
+  #ping?: Ping
+  #pingTimer?: NodeJS.Timeout
 
   constructor() {
     const svc = (this.constructor as typeof SockDaemonClient)
       .serviceName
     this.#path = resolve(`.${svc}/daemon`)
-    this.#socketFile = resolve(this.#path, 'sock')
+    this.#socket = resolve(this.#path, 'socket')
     this.#logFile = resolve(this.#path, 'log')
+    this.#pidFile = resolve(this.#path, 'pid')
   }
 
   /**
@@ -120,6 +138,22 @@ export abstract class SockDaemonClient<
     return this.#connected
   }
 
+  get path() {
+    return this.#path
+  }
+  get socket() {
+    return this.#socket
+  }
+  get logFile() {
+    return this.#logFile
+  }
+  get pidFile() {
+    return this.#pidFile
+  }
+  get connection() {
+    return this.#connection
+  }
+
   isMessage(msg: any): msg is MessageBase {
     return (
       !!msg &&
@@ -132,7 +166,9 @@ export abstract class SockDaemonClient<
   /**
    * Set to check that a response is valid
    */
-  isResponse?: (msg: any) => msg is Response
+  isResponse(msg: any): msg is Response {
+    return this.isMessage(msg)
+  }
 
   /**
    * Send a request. The `id` property is made optional, because it will
@@ -147,45 +183,84 @@ export abstract class SockDaemonClient<
     msg: Omit<Request, 'id'> & { id?: string },
     signal?: AbortSignal
   ): Promise<Response> {
-    this.#socket?.ref()
+    this.#connection?.ref()
     const id = `${this.#clientID}-${this.#msgID++}`
     const request = { ...msg, id } as Request
-    const cr = new ClientRequest<Request, Response>(request, signal)
+    const cr = new ClientRequest<Request, Response>(
+      request,
+      signal,
+      () => {
+        this.#requests.delete(id)
+        if (!this.#requests.size) this.#connection?.unref()
+      }
+    )
     this.#requests.set(id, cr)
     if (!this.#connected) {
-      if (!this.#socket?.connecting) this.#connect()
+      /* c8 ignore next */
+      if (!this.#connection?.connecting) this.#connect()
     } else {
       const [head, body] = message(request)
-      this.#socket!.write(head)
-      this.#socket!.write(body)
+      this.#connection!.write(head)
+      this.#connection!.write(body)
     }
     return cr.promise
   }
 
-  #connect() {
+  async #connect() {
+    await mkdirp(this.#path)
     this.#reader = new Reader()
-    this.#socket = connect(this.#socketFile, () => {
+    const connection = connect(this.#socket, () => {
       this.#connected = true
+      if (!this.#didPing) {
+        const id = `${this.#clientID}-${this.#msgID++}`
+        this.#ping = ping(id)
+        const [phead, pbody] = message(this.#ping)
+        connection.write(phead)
+        connection.write(pbody)
+        clearTimeout(this.#pingTimer)
+        this.#pingTimer = setTimeout(() => {
+          connection.emit(
+            'error',
+            Object.assign(new Error('ping timeout'), {
+              code: 'ENOENT',
+            })
+          )
+        }, 100)
+      }
+
       // replay any pending requests
       for (const cr of this.#requests.values()) {
         const [head, body] = message(cr.request)
-        this.#socket?.write(head)
-        this.#socket?.write(body)
+        this.#connection?.write(head)
+        this.#connection?.write(body)
       }
     })
-    this.#socket.on('data', c => this.#onData(c))
-    this.#socket.on('close', () => this.disconnect())
-    this.#socket.on('error', (er: NodeJS.ErrnoException) => {
+    this.#connection = connection
+    connection.on('data', c => {
+      /* c8 ignore next */
+      if (connection !== this.#connection) return
+      this.#onData(c)
+    })
+    connection.on('close', () => {
+      /* c8 ignore next */
+      if (connection !== this.#connection) return
+      this.disconnect()
+    })
+    connection.on('error', (er: NodeJS.ErrnoException) => {
+      /* c8 ignore next */
+      if (connection !== this.#connection) return
       this.disconnect()
       if (er.code === 'ENOENT') {
         // start daemon
         const { daemonScript } = this
           .constructor as typeof SockDaemonClient
+        /* c8 ignore start */
         const s =
           typeof daemonScript === 'object' ||
           daemonScript.startsWith('file://')
             ? fileURLToPath(daemonScript)
             : daemonScript
+        /* c8 ignore stop */
         const ea = process.execArgv
         const d = spawn(process.execPath, [...ea, s], {
           stdio: [
@@ -207,15 +282,18 @@ export abstract class SockDaemonClient<
 
   #onData(chunk: Buffer) {
     for (const msg of this.#reader!.write(chunk)) {
-      const valid = (this.isResponse || this.isMessage)(msg)
+      if (this.#ping && isPong(msg, this.#ping)) {
+        this.#didPing = true
+        clearTimeout(this.#pingTimer)
+        /* c8 ignore next */
+      } else if (isPong(msg)) continue
+      const valid = this.isResponse(msg)
       if (!valid) continue
       const cr = this.#requests.get(msg.id)
       if (cr) {
-        this.#requests.delete(msg.id)
         cr.resolve(msg as Response)
       }
     }
-    if (!this.#requests.size) this.#socket?.unref()
   }
 
   /**
@@ -223,8 +301,10 @@ export abstract class SockDaemonClient<
    * replayed on the next connection, unless clear() is called.
    */
   disconnect() {
-    this.#socket?.destroy()
-    this.#socket = undefined
+    this.#connected = false
+    this.#connection?.unref()
+    this.#connection?.destroy()
+    this.#connection = undefined
     this.#reader = undefined
   }
 
@@ -234,7 +314,6 @@ export abstract class SockDaemonClient<
   clear() {
     for (const [id, cr] of this.#requests) {
       cr.reject(new Error(`request ${id} aborted`))
-      this.#requests.delete(id)
     }
   }
 }

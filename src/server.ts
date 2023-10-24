@@ -1,10 +1,12 @@
+import { mkdirp } from 'mkdirp'
 import { Serializable } from 'node:child_process'
-import { unlinkSync, writeFileSync } from 'node:fs'
-import { readFile, stat, unlink } from 'node:fs/promises'
+import { unlinkSync } from 'node:fs'
+import { readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { connect, createServer, Server } from 'node:net'
 import { resolve } from 'node:path'
 import { onExit } from 'signal-exit'
 import { socketPostMessage } from 'socket-post-message'
+import { isPing, isPong, Ping, ping, pong } from './ping.js'
 import { reportReady } from './report-ready.js'
 
 const cwd = process.cwd()
@@ -29,8 +31,9 @@ export abstract class SockDaemonServer<
   #idleTimeout: number = 1000 * 60 * 60
   #idleTimer?: NodeJS.Timeout
   #path: string
-  #socketFile: string
+  #socket: string
   #pidFile: string
+  #logFile: string
   #didOnExit = false
 
   constructor(options: SockDaemonServerOptions = {}) {
@@ -44,11 +47,36 @@ export abstract class SockDaemonServer<
       this.#idleTimeout = options.idleTimeout
     }
     this.#path = resolve(cwd, `.${this.#name}`, 'daemon')
-    this.#socketFile = resolve(this.#path, 'socket')
+    this.#socket = resolve(this.#path, 'socket')
+    /* c8 ignore start */
     if (isWindows) {
-      this.#socketFile = resolve('//pipe/?', this.#socketFile)
+      this.#socket = resolve('//pipe/?/' + this.#socket)
     }
+    /* c8 ignore stop */
     this.#pidFile = resolve(this.#path, 'pid')
+    this.#logFile = resolve(this.#path, 'log')
+  }
+
+  get idleTimeout() {
+    return this.#idleTimeout
+  }
+  get connectionTimeout() {
+    return this.#connectionTimeout
+  }
+  get path() {
+    return this.#path
+  }
+  get socket() {
+    return this.#socket
+  }
+  get logFile() {
+    return this.#logFile
+  }
+  get pidFile() {
+    return this.#pidFile
+  }
+  get server() {
+    return this.#server
   }
 
   /**
@@ -62,18 +90,25 @@ export abstract class SockDaemonServer<
   }
 
   #idleTick() {
+    /* c8 ignore next */
     if (!this.#idleTimeout) return
     if (this.#idleTimer) clearTimeout(this.#idleTimer)
-    this.#idleTimer = setTimeout(() => this.close())
+    this.#idleTimer = setTimeout(
+      () => this.close(),
+      this.#idleTimeout
+    )
     this.#idleTimer.unref()
   }
 
   close() {
+    /* c8 ignore next */
     if (!this.#server) return
+    console.error('close server')
     this.#server.close()
     this.#server = undefined
     try {
       unlinkSync(this.#pidFile)
+      /* c8 ignore next */
     } catch {}
   }
 
@@ -86,7 +121,9 @@ export abstract class SockDaemonServer<
     )
   }
 
-  isRequest?: (msg: any) => msg is Request
+  isRequest(msg: any): msg is Request {
+    return this.isMessage(msg)
+  }
 
   /**
    * Method that receives Request objects and returns a
@@ -99,66 +136,75 @@ export abstract class SockDaemonServer<
     | Promise<Omit<Response, 'id'> & { id?: string }>
 
   async #checkForOtherDaemon() {
-    const [sockExists, pidExists] = await Promise.all([
-      stat(this.#socketFile)
-        .then(st => st.isSocket())
-        .catch(() => false),
-      stat(this.#pidFile)
-        .then(st => st.isFile())
-        .catch(() => false),
-    ])
+    const originalStackTraceLimit = Error.stackTraceLimit
+    Error.stackTraceLimit = 0
+    try {
+      const [sockExists, pidExists] = await Promise.all([
+        stat(this.#socket)
+          .then(st => st.isSocket())
+          .catch(() => false),
+        stat(this.#pidFile)
+          .then(st => st.isFile())
+          .catch(() => false),
+      ])
+      console.error('checkForOtherDaemon', { pidExists, sockExists })
 
-    if (sockExists && pidExists) {
-      // send a PING to verify it's running.
-      // if not, we take over.
-      await new Promise<void>(res => {
-        const conn = connect(this.#socketFile)
-        const messageHost = socketPostMessage(conn)
-        conn.setTimeout(10)
-        conn.on('error', () => {
-          conn.destroy()
-          res()
-        })
-        conn.on('timeout', () => {
-          conn.destroy()
-          res()
-        })
-        const id = `${this.#name}-daemon-${process.pid}`
-        messageHost.postMessage({ id, PING: 'PING' })
-        messageHost.on(
-          'message',
-          (msg: { id: string; PING: string }) => {
-            if (msg.id === id && msg.PING === 'PONG') {
+      if (sockExists && pidExists) {
+        // send a PING to verify it's running.
+        // if not, we take over.
+        await new Promise<void>(res => {
+          const conn = connect(this.#socket)
+          const messageHost = socketPostMessage(conn)
+          conn.setTimeout(20)
+          /* c8 ignore start */
+          conn.on('error', () => {
+            conn.destroy()
+            res()
+          })
+          /* c8 ignore stop */
+          conn.on('timeout', () => {
+            conn.destroy()
+            res()
+          })
+          const id = `${this.#name}-daemon-${process.pid}`
+          const p = ping(id)
+          messageHost.postMessage(p)
+          messageHost.on('message', (msg: Ping) => {
+            if (isPong(msg, p)) {
               reportReady('ALREADY RUNNING')
               process.exit()
             }
-          }
-        )
-        conn.on('data', () => {
-          conn.destroy()
-          res()
+          })
+          conn.on('data', () => {
+            conn.destroy()
+            res()
+          })
         })
-      })
+      }
 
       const formerPid = await readFile(this.#pidFile, 'utf8')
         .then(s => Number(s))
         .catch(() => undefined)
+      console.error({ formerPid })
       if (typeof formerPid === 'number') {
         const signal = sockExists ? 'SIGHUP' : 'SIGTERM'
         let sigRes: boolean = false
         try {
           sigRes = process.kill(formerPid, signal)
+          /* c8 ignore next */
         } catch {}
         if (sockExists && sigRes) {
-          await new Promise<void>(r => setTimeout(r, 100))
+          await new Promise<void>(r => setTimeout(r, 50))
           try {
             process.kill(formerPid, 'SIGTERM')
+            /* c8 ignore next */
           } catch {}
         }
       }
+      if (sockExists) await unlink(this.#socket).catch(() => {})
+    } finally {
+      Error.stackTraceLimit = originalStackTraceLimit
     }
-
-    if (sockExists) await unlink(this.#socketFile).catch(() => {})
   }
 
   /**
@@ -167,11 +213,13 @@ export abstract class SockDaemonServer<
    * Otherwise, start up the server and write process id to the pidFile
    */
   async listen() {
+    await mkdirp(this.#path)
     const originalStackTraceLimit = Error.stackTraceLimit
     Error.stackTraceLimit = 0
     try {
       await this.#checkForOtherDaemon()
-      writeFileSync(this.#pidFile, String(process.pid))
+      await writeFile(this.#pidFile, String(process.pid))
+
       this.#server = createServer(conn => {
         this.#idleTick()
         const messageHost = socketPostMessage(conn)
@@ -180,13 +228,11 @@ export abstract class SockDaemonServer<
         }
         messageHost.on('message', async msg => {
           this.#idleTick()
-          if (!this.isMessage(msg)) return
-          // internal PING message from another daemon process
-          if (msg.PING === 'PING' && Object.keys(msg).length === 2) {
-            messageHost.postMessage({ id: msg.id, PING: 'PONG' })
+          if (isPing(msg)) {
+            messageHost.postMessage(pong(msg))
             return
           }
-          if (this.isRequest && !this.isRequest(msg)) {
+          if (!this.isRequest(msg)) {
             return
           }
           messageHost.postMessage({
@@ -195,20 +241,27 @@ export abstract class SockDaemonServer<
           })
         })
         conn.on('timeout', () => conn.destroy())
+        /* c8 ignore start */
         conn.on('error', er => {
           console.error(er)
           conn.destroy()
         })
+        /* c8 ignore stop */
       })
-      this.#server.listen(this.#socketFile, () => {
+
+      this.#server.listen(this.#socket, () => {
         reportReady('READY')
+        console.error('server starting')
         // convenience while testing.
+        /* c8 ignore start */
         if (process.stdin.isTTY && process.stdout.isTTY) {
           console.log('press ^D to exit gracefully')
           process.openStdin()
           process.stdin.on('end', () => this.close())
         }
+        /* c8 ignore stop */
       })
+
       if (!this.#didOnExit) {
         onExit(() => this.close())
         this.#didOnExit = true
