@@ -10,6 +10,7 @@ import type { MessageBase } from './server.js'
 
 const pid = process.pid
 let clientID = 0
+const isWindows = process.platform === 'win32'
 
 /**
  * Class representing a single request from the SockDaemonClient
@@ -101,6 +102,11 @@ export abstract class SockDaemonClient<
       .serviceName
     this.#path = resolve(`.${svc}/daemon`)
     this.#socket = resolve(this.#path, 'socket')
+    /* c8 ignore start */
+    if (isWindows) {
+      this.#socket = resolve('//pipe/?/' + this.#socket)
+    }
+    /* c8 ignore stop */
     this.#logFile = resolve(this.#path, 'log')
     this.#pidFile = resolve(this.#path, 'pid')
   }
