@@ -26,16 +26,22 @@ To do this, the server daemon and the client need to both know
 the name that they'll use for the socket, and the client needs to
 know the location of the daemon script.
 
-For example, say that you have a file like this at
-`src/daemon.mts`, which is built to `dist/esm/daemon.mjs`.
-
 The type stuff is clearly only required when you are using
 TypeScript, but it is a nice check to ensure that the server and
 client are speaking the same language.
 
-```js
-import { SockDaemonServer as Server } from 'sock-daemon'
+For example, you can create a service like this, defining a
+client and server implementation:
+
+```ts
+// index.mjs
+import {
+  SockDaemonServer as Server,
+  SockDaemonClient as Client,
+} from 'sock-daemon'
 import type { MessageBase } from 'sock-daemon'
+
+export const serviceName = 'my-service'
 
 // This must be an object that extends MessageBase
 export interface Request extends MessageBase {
@@ -49,9 +55,9 @@ export interface Response extends MessageBase {
 }
 
 // create my application specific server to handle requests
-class MyDaemon extends Server<Request, Response> {
+export class MyServiceServer extends Server<Request, Response> {
   // check here to ensure that the request is valid
-  // anything that fails this will be logged and 
+  // anything that fails this will be logged and
   isRequest(msg: any): msg is Request {
     return super.isMessage(msg) && typeof msg.foo === 'string'
   }
@@ -60,13 +66,14 @@ class MyDaemon extends Server<Request, Response> {
   // the socket, pidFile, and log will be found in
   // .{service-name}/daemon/... in the current working dir
   static get serviceName() {
-    return 'my-service'
+    return serviceName
   }
 
   // get a request, return a response.
   // must return either Response or Promise<Response>
   async handle (msg: Request) {
-    // stderr will be written to ./.my-service/daemon/log
+    // stderr will be written to ./.my-service/daemon/log when
+    // spawned automatically by the client.
     console.error('got request', msg)
     // must return a response with the same ID we got in the
     // request, to handle replayed or out of order messages
@@ -77,35 +84,10 @@ class MyDaemon extends Server<Request, Response> {
   }
 }
 
-// instantiate the server daemon. Options are optional,
-// shown here with their default values.
-const server = new MyDaemon({
-  // how long in ms should the daemon stick around if it hasn't
-  // seen any requests? Defaults to 1 hour
-  idleTimeout: 1000 * 60 * 60,
-
-  // how long should a connection be allowed to persist, if it
-  // has not made any requests? Defaults to 1 second
-  connectionTimeout: 1000,
-})
-
-// This will listen on the appropriate socket, or gracefully exit
-// if there's already a daemon listening.
-server.listen()
-```
-
-Then, say you have a client at `src/client.mts`, which is built
-to `./dist/esm/client.mjs` (so client and server are in the same
-folder).
-
-```js
-import type { Request, Response } from './daemon.mjs'
-import { SockDaemonClient as Client } from 'sock-daemon'
-
 export class MyServiceClient extends Client<Request, Response> {
   // this must match what's defined in the daemon server
   static get serviceName() {
-    return 'my-service'
+    return serviceName
   }
 
   // the path to the node script that starts the daemon
@@ -131,10 +113,30 @@ export class MyServiceClient extends Client<Request, Response> {
 }
 ```
 
-And then using the client in your program somewhere:
+Create the `daemon.mjs` script like this:
 
-```js
-import { MyServiceClient as Client } from './client.mjs'
+```ts
+import { MyServiceServer } from './index.mjs'
+
+// instantiate the server daemon. Options are optional,
+// shown here with their default values.
+const server = new MyServiceServer({
+  // how long in ms should the daemon stick around if it hasn't
+  // seen any requests? Defaults to 1 hour
+  idleTimeout: 1000 * 60 * 60,
+
+  // how long should a connection be allowed to persist, if it
+  // has not made any requests? Defaults to 1 second
+  connectionTimeout: 1000,
+})
+
+server.listen()
+```
+
+And then using the client in a program somewhere:
+
+```ts
+import { MyServiceClient as Client } from 'my-service'
 
 const client = new Client()
 // starts the daemon, if it's not already running

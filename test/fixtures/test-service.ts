@@ -40,7 +40,7 @@ export class TestClient extends Client<Request, Response> {
   isResponse(msg: any): msg is Response {
     return this.isMessage(msg) && typeof msg.bar === 'string'
   }
-  async fooIntoBar (foo: string, signal?: AbortSignal) {
+  async fooIntoBar(foo: string, signal?: AbortSignal) {
     const { bar } = await super.request({ foo }, signal)
     return bar
   }
