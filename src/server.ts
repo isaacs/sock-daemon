@@ -150,7 +150,7 @@ export abstract class SockDaemonServer<
       console.error('checkForOtherDaemon', { pidExists, sockExists })
 
       if (sockExists && pidExists) {
-        // send a PING to verify it's running.
+        // send a ping to verify it's running.
         // if not, we take over.
         await new Promise<void>(res => {
           const conn = connect(this.#socket)

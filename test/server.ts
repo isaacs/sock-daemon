@@ -32,7 +32,7 @@ const shutdown = async () => {
   } catch {}
   await rimraf('.test-service/daemon/pid')
 }
-t.before(() => shutdown())
+t.beforeEach(() => shutdown())
 t.afterEach(() => shutdown())
 
 t.test('instantiate server', t => {
@@ -80,11 +80,11 @@ t.test('instantiate client', t => {
 })
 
 t.test('spin up daemon, then defer to running daemon', async t => {
-  await shutdown()
   const d1 = spawn(process.execPath, [...process.execArgv, daemon])
   const out1: Buffer[] = []
   d1.stdout.on('data', c => out1.push(c))
   await new Promise<void>(r => d1.stdout.once('data', () => r()))
+  await new Promise<void>(r => setTimeout(r, 100))
   const d2 = spawn(process.execPath, [...process.execArgv, daemon])
   const out2: Buffer[] = []
   d2.stdout.on('data', c => out2.push(c))
@@ -93,6 +93,7 @@ t.test('spin up daemon, then defer to running daemon', async t => {
     new Promise<void>(r => d1.once('close', () => r())),
     new Promise<void>(r => d2.once('close', () => r())),
   ])
+  await new Promise<void>(r => setTimeout(r, 100))
   t.equal(Buffer.concat(out1).toString('utf8').trim(), 'READY')
   t.equal(
     Buffer.concat(out2).toString('utf8').trim(),
@@ -117,7 +118,6 @@ t.test('spin up a server and ask it a question', async t => {
 })
 
 t.test('kill wedged non-server process', async t => {
-  await shutdown()
   const d = spawn(process.execPath, [
     '-e',
     'setInterval(() => {}, 100000); console.log("READY")',
@@ -138,7 +138,6 @@ t.test('kill wedged non-server process', async t => {
 })
 
 t.test('kill server process that fails ping', async t => {
-  await shutdown()
   const d = spawn(process.execPath, [
     '-e',
     `
@@ -165,7 +164,6 @@ t.test('kill server process that fails ping', async t => {
 })
 
 t.test('kill server process that fails ping but writes', async t => {
-  await shutdown()
   const d = spawn(process.execPath, [
     '-e',
     `
@@ -204,7 +202,6 @@ t.test('base class stuff', t => {
 })
 
 t.test('abort request', async t => {
-  await shutdown()
   const c = new TestClient()
   // make one request to do ping and verify connection
   t.equal(
