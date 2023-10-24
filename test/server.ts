@@ -120,9 +120,10 @@ t.test('kill wedged non-server process', async t => {
   await shutdown()
   const d = spawn(process.execPath, [
     '-e',
-    'setInterval(() => {}, 100000)',
+    'setInterval(() => {}, 100000); console.log("READY")',
   ])
   writeFileSync('.test-service/daemon/pid', String(d.pid))
+  await new Promise<void>(r => d.stdout.on('data', () => r()))
   const c = new TestClient()
   const bar = await c.fooIntoBar('foo string')
   t.equal(bar, 'bar: foo string')
