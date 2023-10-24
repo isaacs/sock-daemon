@@ -50,7 +50,7 @@ export abstract class SockDaemonServer<
     this.#socket = resolve(this.#path, 'socket')
     /* c8 ignore start */
     if (isWindows) {
-      this.#socket = resolve('//pipe/?/' + this.#socket)
+      this.#socket = resolve('//?/pipe/' + this.#socket)
     }
     /* c8 ignore stop */
     this.#pidFile = resolve(this.#path, 'pid')

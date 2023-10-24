@@ -13,7 +13,7 @@ const daemon = fileURLToPath(
   new URL('./fixtures/daemon.mts', import.meta.url)
 )
 const socketPath =
-  (process.platform === 'win32' ? '\\\\pipe\\?\\' : '') +
+  (process.platform === 'win32' ? '\\\\?\\pipe\\' : '') +
   resolve('.test-service/daemon/socket')
 
 const shutdown = async () => {
