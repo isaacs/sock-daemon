@@ -109,7 +109,6 @@ t.test('spin up daemon, then defer to running daemon', async t => {
     Buffer.concat(out2).toString('utf8').trim(),
     'ALREADY RUNNING'
   )
-  console.error('killing first daemon')
   try {
     process.kill(d1.pid!, 'SIGHUP')
   } catch {}
@@ -131,11 +130,6 @@ t.test('spin up a server and ask it a question', async t => {
   t.equal(bar, 'bar: foo string')
   // non-request message gets ignored (no-op for coverage)
   const [head, body] = message({ hello: 'world' })
-  console.error(
-    'writing non-request message',
-    [head, body],
-    !!c.connection
-  )
   c.connection?.write(head)
   c.connection?.write(body)
   await new Promise<void>(r => setTimeout(r, 50))
@@ -148,7 +142,6 @@ t.test('kill wedged non-server process', async t => {
   ])
   await new Promise<void>(r => d.stdout.on('data', () => r()))
   await new Promise<void>(r => setTimeout(r, 100))
-  console.error('wedged process', d.pid)
   writeFileSync('.test-service/daemon/pid', String(d.pid))
   const exit = new Promise<{
     code: number | null
@@ -164,7 +157,6 @@ t.test('kill wedged non-server process', async t => {
   }, 5000).unref()
   const response = await bar
   t.equal(response, 'bar: foo wedge test')
-  console.error('got response', response)
   t.strictSame(
     await exit,
     isWindows
@@ -189,14 +181,12 @@ t.test('kill server process that fails ping', async t => {
   await new Promise<void>(r => d.stdout.on('data', () => r()))
   await new Promise<void>(r => setTimeout(r, 100))
   writeFileSync('.test-service/daemon/pid', String(d.pid))
-  console.error('unesponsive server started', d.pid)
   const exit = new Promise<{
     code: number | null
     signal: NodeJS.Signals | null
   }>(r => d.on('close', (code, signal) => r({ code, signal })))
   const c = new TestClient()
   const bar = c.fooIntoBar('foo unesponsive silent server')
-  console.error('sent request', c.requests, bar)
   // just in case, don't hang the test forever
   setTimeout(() => {
     try {
@@ -204,7 +194,6 @@ t.test('kill server process that fails ping', async t => {
     } catch {}
   }, 5000).unref()
   const response = await bar
-  console.error('got response', { response })
   t.equal(response, 'bar: foo unesponsive silent server')
 
   t.match(
@@ -231,14 +220,12 @@ t.test('kill server process that fails ping but writes', async t => {
   await new Promise<void>(r => d.stdout.on('data', () => r()))
   await new Promise<void>(r => setTimeout(r, 100))
   writeFileSync('.test-service/daemon/pid', String(d.pid))
-  console.error('writing unresponsive server started', d.pid)
   const exit = new Promise<{
     code: number | null
     signal: NodeJS.Signals | null
   }>(r => d.on('close', (code, signal) => r({ code, signal })))
   const c = new TestClient()
   const bar = c.fooIntoBar('foo unesponsive writing server')
-  console.error('sent request', c.requests, bar)
   // just in case, don't hang the test forever
   setTimeout(() => {
     try {
@@ -246,7 +233,6 @@ t.test('kill server process that fails ping but writes', async t => {
     } catch {}
   }, 5000).unref()
   const response = await bar
-  console.error('got response', { response })
   t.equal(response, 'bar: foo unesponsive writing server')
 
   t.match(

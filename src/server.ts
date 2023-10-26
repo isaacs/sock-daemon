@@ -148,26 +148,19 @@ export abstract class SockDaemonServer<
           .then(st => st.isFile())
           .catch(() => false),
       ])
-      console.error('checkForOtherDaemon', { pidExists, sockExists })
 
       if (sockExists && pidExists) {
         // send a ping to verify it's running.
         // if not, we take over.
         await new Promise<void>(res => {
           const conn = connect(this.#socket)
-          console.error('connected to other daemon server')
           /* c8 ignore start */
-          conn.on('error', er => {
-            console.error(
-              'other daemon connection check got error',
-              er
-            )
+          conn.on('error', () => {
             conn.destroy()
             res()
           })
           /* c8 ignore stop */
           conn.on('timeout', () => {
-            console.error('other daemon check timeout')
             conn.destroy()
             res()
           })
@@ -177,7 +170,6 @@ export abstract class SockDaemonServer<
           const p = ping(id)
           messageHost.postMessage(p)
           messageHost.on('message', (msg: Pong) => {
-            console.error('other daemon check got reply', msg)
             if (isPong(msg, p)) {
               reportReady('ALREADY RUNNING')
               process.exit()
@@ -188,19 +180,16 @@ export abstract class SockDaemonServer<
             /* c8 ignore stop */
           })
           // if we get a data event that is not pong, that's a failure
-          conn.on('data', c => {
-            console.error('other daemon check got data', String(c))
+          conn.on('data', () => {
             conn.destroy()
             res()
           })
           conn.on('close', () => {
-            console.error('other daemon check closed')
             conn.destroy()
             res()
           })
           /* c8 ignore start */
           conn.on('end', () => {
-            console.error('other daemon check ended')
             conn.destroy()
             res()
           })
@@ -211,18 +200,15 @@ export abstract class SockDaemonServer<
       const formerPid = await readFile(this.#pidFile, 'utf8')
         .then(s => Number(s))
         .catch(() => undefined)
-      console.error({ formerPid })
       if (typeof formerPid === 'number') {
         // platform-specific stuff here
         /* c8 ignore start */
         const signal = sockExists && !isWindows ? 'SIGHUP' : 'SIGTERM'
         let sigRes: boolean = false
         try {
-          console.error('kill with SIGHUP')
           sigRes = process.kill(formerPid, signal)
         } catch {}
         if (signal === 'SIGHUP' && sigRes) {
-          console.error('kill with SIGTERM')
           await new Promise<void>(r => setTimeout(r, 50))
           try {
             process.kill(formerPid, 'SIGTERM')
@@ -230,7 +216,6 @@ export abstract class SockDaemonServer<
         }
         /* c8 ignore stop */
       }
-      console.error('unlink socket')
       if (sockExists) await unlink(this.#socket).catch(() => {})
     } finally {
       Error.stackTraceLimit = originalStackTraceLimit
@@ -248,44 +233,30 @@ export abstract class SockDaemonServer<
     Error.stackTraceLimit = 0
     try {
       await this.#checkForOtherDaemon()
-      console.error(
-        'write pid to pidFile',
-        process.pid,
-        this.#pidFile
-      )
       await writeFile(this.#pidFile, String(process.pid))
 
       this.#server = createServer(conn => {
-        console.error('server got connection')
         this.#idleTick()
         const messageHost = socketPostMessage(conn)
         if (this.#connectionTimeout) {
           conn.setTimeout(this.#connectionTimeout)
         }
         messageHost.on('message', async msg => {
-          console.error('got message', msg)
           this.#idleTick()
           if (isPing(msg)) {
-            console.error('got ping', msg)
             // write pongs as a single data write
             const [phead, pbody] = message(pong(msg))
             conn.write(Buffer.concat([phead, pbody]))
             return
           }
-          if (!this.isRequest(msg)) {
-            console.error('message is not a request', msg)
-            return
-          }
+          if (!this.isRequest(msg)) return
           messageHost.postMessage({
             ...(await this.handle(msg as Request)),
             id: msg.id,
           })
         })
         /* c8 ignore start */
-        conn.on('timeout', () => {
-          console.error('connection timed out from server')
-          conn.destroy()
-        })
+        conn.on('timeout', () => conn.destroy())
         conn.on('error', er => {
           console.error('connection error on server', er)
           conn.destroy()
