@@ -272,6 +272,8 @@ export abstract class SockDaemonClient<
           stdio: [
             'ignore',
             'pipe',
+            //'inherit',
+            //'pipe',
             openSync(
               this.#logFile,
               constants.O_APPEND |
@@ -281,6 +283,9 @@ export abstract class SockDaemonClient<
           ],
           detached: true,
         })
+        /* c8 ignore start */
+        d.stderr?.on('data', c => process.stderr.write(c))
+        /* c8 ignore stop */
         d.stdout!.on('data', () => this.#connect())
       }
     })

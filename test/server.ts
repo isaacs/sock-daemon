@@ -20,17 +20,13 @@ const socketPath =
 
 const shutdown = async () => {
   try {
-    process.kill(
-      Number(readFileSync('.test-service/daemon/pid', 'utf8')),
-      'SIGHUP'
-    )
+    const n = Number(readFileSync('.test-service/daemon/pid', 'utf8'))
+    if (n) process.kill(n, 'SIGHUP')
   } catch {}
   await new Promise<void>(r => setTimeout(r, 100))
   try {
-    process.kill(
-      Number(readFileSync('.test-service/daemon/pid', 'utf8')),
-      'SIGKILL'
-    )
+    const n = Number(readFileSync('.test-service/daemon/pid', 'utf8'))
+    if (n) process.kill(n, 'SIGKILL')
   } catch {}
   await rimraf('.test-service/daemon/pid')
 }
@@ -81,12 +77,23 @@ t.test('instantiate client', t => {
   t.end()
 })
 
+t.test('spin up a server and ask it a question', async t => {
+  const c = new TestClient()
+  const bar = await c.fooIntoBar('foo string')
+  t.equal(bar, 'bar: foo string')
+  // non-request message gets ignored (no-op for coverage)
+  const [head, body] = message({ hello: 'world' })
+  c.connection?.write(head)
+  c.connection?.write(body)
+  await new Promise<void>(r => setTimeout(r, 50))
+})
+
 t.test('spin up daemon, then defer to running daemon', async t => {
   const d1 = spawn(process.execPath, [
     ...process.execArgv,
     daemon,
     'defer test 1',
-  ])
+  ], { stdio: ['ignore', 'pipe', 'ignore'] })
   const out1: Buffer[] = []
   d1.stdout.on('data', c => out1.push(c))
   await new Promise<void>(r => d1.stdout.once('data', () => r()))
@@ -95,7 +102,7 @@ t.test('spin up daemon, then defer to running daemon', async t => {
     ...process.execArgv,
     daemon,
     'defer test 2',
-  ])
+  ], { stdio: ['ignore', 'pipe', 'ignore'] })
   const out2: Buffer[] = []
   d2.stdout.on('data', c => out2.push(c))
   await new Promise<void>(r => d2.stdout.once('data', () => r()))
@@ -110,29 +117,18 @@ t.test('spin up daemon, then defer to running daemon', async t => {
     'ALREADY RUNNING'
   )
   try {
-    process.kill(d1.pid!, 'SIGHUP')
+    if (d1.pid) process.kill(d1.pid, 'SIGHUP')
   } catch {}
   try {
-    process.kill(d1.pid!, 'SIGTERM')
+    if (d1.pid) process.kill(d1.pid, 'SIGTERM')
   } catch {}
   try {
-    process.kill(d2.pid!, 'SIGHUP')
+    if (d2.pid) process.kill(d2.pid, 'SIGHUP')
   } catch {}
   try {
-    process.kill(d2.pid!, 'SIGTERM')
+    if (d2.pid) process.kill(d2.pid, 'SIGTERM')
   } catch {}
   await done
-})
-
-t.test('spin up a server and ask it a question', async t => {
-  const c = new TestClient()
-  const bar = await c.fooIntoBar('foo string')
-  t.equal(bar, 'bar: foo string')
-  // non-request message gets ignored (no-op for coverage)
-  const [head, body] = message({ hello: 'world' })
-  c.connection?.write(head)
-  c.connection?.write(body)
-  await new Promise<void>(r => setTimeout(r, 50))
 })
 
 t.test('kill wedged non-server process', async t => {
