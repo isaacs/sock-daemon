@@ -30,6 +30,7 @@
     "endOfLine": "lf"
   },
   "tshy": {
+    "selfLink": false,
     "exports": {
       "./package.json": "./package.json"
     }
@@ -51,7 +52,7 @@
     "typedoc": "typedoc"
   },
   "tap": {
-    "coverage-map": "map.js",
+    "coverage-map": "./map.js",
     "before": "./test/before.ts"
   }
 }

@@ -71,7 +71,7 @@ export class MyServiceServer extends Server<Request, Response> {
 
   // get a request, return a response.
   // must return either Response or Promise<Response>
-  async handle (msg: Request) {
+  async handle(msg: Request) {
     // stderr will be written to ./.my-service/daemon/log when
     // spawned automatically by the client.
     console.error('got request', msg)
@@ -106,7 +106,7 @@ export class MyServiceClient extends Client<Request, Response> {
   // eventually call super.request() to send the actual request.
   // the argument to super.request() MUST NOT include an id, that
   // is managed by the SockDaemonClient base class.
-  async fooIntoBar (foo: string) {
+  async fooIntoBar(foo: string) {
     const { bar } = await super.request({ foo })
     return bar
   }

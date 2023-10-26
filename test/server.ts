@@ -9,6 +9,8 @@ import { SockDaemonClient } from '../src/client.js'
 import { SockDaemonServer } from '../src/server.js'
 import { TestClient, TestDaemon } from './fixtures/test-service.js'
 
+const isWindows = process.platform === 'win32'
+
 const daemon = fileURLToPath(
   new URL('./fixtures/daemon.mts', import.meta.url)
 )
@@ -80,12 +82,20 @@ t.test('instantiate client', t => {
 })
 
 t.test('spin up daemon, then defer to running daemon', async t => {
-  const d1 = spawn(process.execPath, [...process.execArgv, daemon])
+  const d1 = spawn(process.execPath, [
+    ...process.execArgv,
+    daemon,
+    'defer test 1',
+  ])
   const out1: Buffer[] = []
   d1.stdout.on('data', c => out1.push(c))
   await new Promise<void>(r => d1.stdout.once('data', () => r()))
   await new Promise<void>(r => setTimeout(r, 100))
-  const d2 = spawn(process.execPath, [...process.execArgv, daemon])
+  const d2 = spawn(process.execPath, [
+    ...process.execArgv,
+    daemon,
+    'defer test 2',
+  ])
   const out2: Buffer[] = []
   d2.stdout.on('data', c => out2.push(c))
   await new Promise<void>(r => d2.stdout.once('data', () => r()))
@@ -99,8 +109,18 @@ t.test('spin up daemon, then defer to running daemon', async t => {
     Buffer.concat(out2).toString('utf8').trim(),
     'ALREADY RUNNING'
   )
+  console.error('killing first daemon')
   try {
     process.kill(d1.pid!, 'SIGHUP')
+  } catch {}
+  try {
+    process.kill(d1.pid!, 'SIGTERM')
+  } catch {}
+  try {
+    process.kill(d2.pid!, 'SIGHUP')
+  } catch {}
+  try {
+    process.kill(d2.pid!, 'SIGTERM')
   } catch {}
   await done
 })
@@ -109,12 +129,16 @@ t.test('spin up a server and ask it a question', async t => {
   const c = new TestClient()
   const bar = await c.fooIntoBar('foo string')
   t.equal(bar, 'bar: foo string')
-  t.test('ignore non-request message (no-op for coverage)', t => {
-    const [head, body] = message({ id: 'hello, world' })
-    c.connection?.write(head)
-    c.connection?.write(body)
-    t.end()
-  })
+  // non-request message gets ignored (no-op for coverage)
+  const [head, body] = message({ hello: 'world' })
+  console.error(
+    'writing non-request message',
+    [head, body],
+    !!c.connection
+  )
+  c.connection?.write(head)
+  c.connection?.write(body)
+  await new Promise<void>(r => setTimeout(r, 50))
 })
 
 t.test('kill wedged non-server process', async t => {
@@ -122,18 +146,30 @@ t.test('kill wedged non-server process', async t => {
     '-e',
     'setInterval(() => {}, 100000); console.log("READY")',
   ])
-  writeFileSync('.test-service/daemon/pid', String(d.pid))
   await new Promise<void>(r => d.stdout.on('data', () => r()))
+  await new Promise<void>(r => setTimeout(r, 100))
+  console.error('wedged process', d.pid)
+  writeFileSync('.test-service/daemon/pid', String(d.pid))
+  const exit = new Promise<{
+    code: number | null
+    signal: NodeJS.Signals | null
+  }>(r => d.on('close', (code, signal) => r({ code, signal })))
   const c = new TestClient()
-  const bar = await c.fooIntoBar('foo string')
-  t.equal(bar, 'bar: foo string')
+  const bar = c.fooIntoBar('foo wedge test')
   // just in case, don't hang the test forever
-  setTimeout(() => d.kill('SIGKILL'))
-  t.equal(
-    await new Promise<NodeJS.Signals | null>(r =>
-      d.on('close', (_, signal) => r(signal))
-    ),
-    'SIGTERM'
+  setTimeout(() => {
+    try {
+      d.kill('SIGKILL')
+    } catch {}
+  }, 5000).unref()
+  const response = await bar
+  t.equal(response, 'bar: foo wedge test')
+  console.error('got response', response)
+  t.strictSame(
+    await exit,
+    isWindows
+      ? { code: 1, signal: null }
+      : { code: null, signal: 'SIGTERM' }
   )
 })
 
@@ -145,21 +181,37 @@ t.test('kill server process that fails ping', async t => {
     server.listen(${JSON.stringify(
       socketPath
     )}, () => console.log('READY'))
-    process.on('SIGHUP', () => {})
+    try {
+      process.on('SIGHUP', () => {})
+    } catch {}
     `,
   ])
   await new Promise<void>(r => d.stdout.on('data', () => r()))
+  await new Promise<void>(r => setTimeout(r, 100))
   writeFileSync('.test-service/daemon/pid', String(d.pid))
+  console.error('unesponsive server started', d.pid)
+  const exit = new Promise<{
+    code: number | null
+    signal: NodeJS.Signals | null
+  }>(r => d.on('close', (code, signal) => r({ code, signal })))
   const c = new TestClient()
-  const bar = await c.fooIntoBar('foo string')
-  t.equal(bar, 'bar: foo string')
+  const bar = c.fooIntoBar('foo unesponsive silent server')
+  console.error('sent request', c.requests, bar)
   // just in case, don't hang the test forever
-  setTimeout(() => d.kill('SIGKILL'))
+  setTimeout(() => {
+    try {
+      d.kill('SIGKILL')
+    } catch {}
+  }, 5000).unref()
+  const response = await bar
+  console.error('got response', { response })
+  t.equal(response, 'bar: foo unesponsive silent server')
+
   t.match(
-    await new Promise<NodeJS.Signals | null>(r =>
-      d.on('close', (_, signal) => r(signal))
-    ),
-    /SIG(TERM|KILL)/
+    await exit,
+    isWindows
+      ? { code: 1, signal: null }
+      : { code: null, signal: 'SIGTERM' }
   )
 })
 
@@ -171,21 +223,37 @@ t.test('kill server process that fails ping but writes', async t => {
     server.listen(${JSON.stringify(
       socketPath
     )}, () => console.log('READY'))
-    process.on('SIGHUP', () => {})
+    try {
+      process.on('SIGHUP', () => {})
+    } catch {}
     `,
   ])
   await new Promise<void>(r => d.stdout.on('data', () => r()))
+  await new Promise<void>(r => setTimeout(r, 100))
   writeFileSync('.test-service/daemon/pid', String(d.pid))
+  console.error('writing unresponsive server started', d.pid)
+  const exit = new Promise<{
+    code: number | null
+    signal: NodeJS.Signals | null
+  }>(r => d.on('close', (code, signal) => r({ code, signal })))
   const c = new TestClient()
-  const bar = await c.fooIntoBar('foo string')
-  t.equal(bar, 'bar: foo string')
+  const bar = c.fooIntoBar('foo unesponsive writing server')
+  console.error('sent request', c.requests, bar)
   // just in case, don't hang the test forever
-  setTimeout(() => d.kill('SIGKILL'))
+  setTimeout(() => {
+    try {
+      d.kill('SIGKILL')
+    } catch {}
+  }, 5000).unref()
+  const response = await bar
+  console.error('got response', { response })
+  t.equal(response, 'bar: foo unesponsive writing server')
+
   t.match(
-    await new Promise<NodeJS.Signals | null>(r =>
-      d.on('close', (_, signal) => r(signal))
-    ),
-    /SIG(TERM|KILL)/
+    await exit,
+    isWindows
+      ? { code: 1, signal: null }
+      : { code: null, signal: 'SIGTERM' }
   )
 })
 

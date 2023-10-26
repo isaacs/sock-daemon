@@ -5,8 +5,8 @@ import { readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { connect, createServer, Server } from 'node:net'
 import { resolve } from 'node:path'
 import { onExit } from 'signal-exit'
-import { socketPostMessage } from 'socket-post-message'
-import { isPing, isPong, Ping, ping, pong } from './ping.js'
+import { message, socketPostMessage } from 'socket-post-message'
+import { isPing, isPong, ping, Pong, pong } from './ping.js'
 import { reportReady } from './report-ready.js'
 
 const cwd = process.cwd()
@@ -141,7 +141,8 @@ export abstract class SockDaemonServer<
     try {
       const [sockExists, pidExists] = await Promise.all([
         stat(this.#socket)
-          .then(st => st.isSocket())
+          /* c8 ignore next */
+          .then(st => isWindows || st.isSocket())
           .catch(() => false),
         stat(this.#pidFile)
           .then(st => st.isFile())
@@ -154,31 +155,56 @@ export abstract class SockDaemonServer<
         // if not, we take over.
         await new Promise<void>(res => {
           const conn = connect(this.#socket)
-          const messageHost = socketPostMessage(conn)
-          conn.setTimeout(20)
+          console.error('connected to other daemon server')
           /* c8 ignore start */
-          conn.on('error', () => {
+          conn.on('error', er => {
+            console.error(
+              'other daemon connection check got error',
+              er
+            )
             conn.destroy()
             res()
           })
           /* c8 ignore stop */
           conn.on('timeout', () => {
+            console.error('other daemon check timeout')
             conn.destroy()
             res()
           })
+          const messageHost = socketPostMessage(conn)
+          conn.setTimeout(50)
           const id = `${this.#name}-daemon-${process.pid}`
           const p = ping(id)
           messageHost.postMessage(p)
-          messageHost.on('message', (msg: Ping) => {
+          messageHost.on('message', (msg: Pong) => {
+            console.error('other daemon check got reply', msg)
             if (isPong(msg, p)) {
               reportReady('ALREADY RUNNING')
               process.exit()
             }
+            /* c8 ignore start */
+            conn.destroy()
+            res()
+            /* c8 ignore stop */
           })
-          conn.on('data', () => {
+          // if we get a data event that is not pong, that's a failure
+          conn.on('data', c => {
+            console.error('other daemon check got data', String(c))
             conn.destroy()
             res()
           })
+          conn.on('close', () => {
+            console.error('other daemon check closed')
+            conn.destroy()
+            res()
+          })
+          /* c8 ignore start */
+          conn.on('end', () => {
+            console.error('other daemon check ended')
+            conn.destroy()
+            res()
+          })
+          /* c8 ignore start */
         })
       }
 
@@ -187,20 +213,24 @@ export abstract class SockDaemonServer<
         .catch(() => undefined)
       console.error({ formerPid })
       if (typeof formerPid === 'number') {
-        const signal = sockExists ? 'SIGHUP' : 'SIGTERM'
+        // platform-specific stuff here
+        /* c8 ignore start */
+        const signal = sockExists && !isWindows ? 'SIGHUP' : 'SIGTERM'
         let sigRes: boolean = false
         try {
+          console.error('kill with SIGHUP')
           sigRes = process.kill(formerPid, signal)
-          /* c8 ignore next */
         } catch {}
-        if (sockExists && sigRes) {
+        if (signal === 'SIGHUP' && sigRes) {
+          console.error('kill with SIGTERM')
           await new Promise<void>(r => setTimeout(r, 50))
           try {
             process.kill(formerPid, 'SIGTERM')
-            /* c8 ignore next */
           } catch {}
         }
+        /* c8 ignore stop */
       }
+      console.error('unlink socket')
       if (sockExists) await unlink(this.#socket).catch(() => {})
     } finally {
       Error.stackTraceLimit = originalStackTraceLimit
@@ -218,21 +248,32 @@ export abstract class SockDaemonServer<
     Error.stackTraceLimit = 0
     try {
       await this.#checkForOtherDaemon()
+      console.error(
+        'write pid to pidFile',
+        process.pid,
+        this.#pidFile
+      )
       await writeFile(this.#pidFile, String(process.pid))
 
       this.#server = createServer(conn => {
+        console.error('server got connection')
         this.#idleTick()
         const messageHost = socketPostMessage(conn)
         if (this.#connectionTimeout) {
           conn.setTimeout(this.#connectionTimeout)
         }
         messageHost.on('message', async msg => {
+          console.error('got message', msg)
           this.#idleTick()
           if (isPing(msg)) {
-            messageHost.postMessage(pong(msg))
+            console.error('got ping', msg)
+            // write pongs as a single data write
+            const [phead, pbody] = message(pong(msg))
+            conn.write(Buffer.concat([phead, pbody]))
             return
           }
           if (!this.isRequest(msg)) {
+            console.error('message is not a request', msg)
             return
           }
           messageHost.postMessage({
@@ -240,10 +281,13 @@ export abstract class SockDaemonServer<
             id: msg.id,
           })
         })
-        conn.on('timeout', () => conn.destroy())
         /* c8 ignore start */
+        conn.on('timeout', () => {
+          console.error('connection timed out from server')
+          conn.destroy()
+        })
         conn.on('error', er => {
-          console.error(er)
+          console.error('connection error on server', er)
           conn.destroy()
         })
         /* c8 ignore stop */
@@ -259,15 +303,17 @@ export abstract class SockDaemonServer<
           process.openStdin()
           process.stdin.on('end', () => this.close())
         }
-        /* c8 ignore stop */
       })
+      /* c8 ignore stop */
 
       if (!this.#didOnExit) {
         onExit(() => this.close())
         this.#didOnExit = true
       }
+      /* c8 ignore start */
     } finally {
       Error.stackTraceLimit = originalStackTraceLimit
     }
+    /* c8 ignore stop */
   }
 }
