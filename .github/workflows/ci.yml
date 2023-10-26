@@ -8,20 +8,17 @@ jobs:
       matrix:
         node-version: [16.x, 18.x, 20.x, 21.x]
         platform:
-        - os: ubuntu-latest
-          shell: bash
-        - os: macos-latest
-          shell: bash
-        - os: windows-latest
-          shell: bash
-        - os: windows-latest
-          shell: powershell
+        - ubuntu-latest
+        - macos-latest
+        include:
+          - platform: windows-latest
+            node-version: 20.x
+          - platform: windows-latest
+            node-version: 21.x
+
       fail-fast: false
 
-    runs-on: ${{ matrix.platform.os }}
-    defaults:
-      run:
-        shell: ${{ matrix.platform.shell }}
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout Repository
@@ -36,9 +33,9 @@ jobs:
         run: npm install
 
       - name: Run Tests Unix (complete coverage)
-        if: matrix.platform.os != 'windows-latest'
+        if: matrix.platform != 'windows-latest'
         run: npm test -- -c -t0
 
       - name: Run Tests Windows (incomplete coverage)
-        if: matrix.platform.os == 'windows-latest' && ( matrix.node-version == '20.x' || matrix.node-version == '21.x' )
+        if: matrix.platform == 'windows-latest'
         run: npm test -- -c -t0 --allow-incomplete-coverage
