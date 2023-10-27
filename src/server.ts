@@ -12,7 +12,8 @@ import { reportReady } from './report-ready.js'
 const cwd = process.cwd()
 const isWindows = process.platform === 'win32'
 
-export interface MessageBase extends Record<string, Serializable> {
+export interface MessageBase
+  extends Record<string, Serializable | null | undefined> {
   id: string
 }
 
