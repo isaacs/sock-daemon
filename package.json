@@ -32,11 +32,44 @@
   "tshy": {
     "selfLink": false,
     "exports": {
-      "./package.json": "./package.json"
+      ".": "./src/index.ts",
+      "./package.json": "./package.json",
+      "./client": "./src/client.ts",
+      "./server": "./src/server.ts"
     }
   },
   "exports": {
-    "./package.json": "./package.json"
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/index.d.ts",
+        "default": "./dist/commonjs/index.js"
+      }
+    },
+    "./package.json": "./package.json",
+    "./client": {
+      "import": {
+        "types": "./dist/esm/client.d.ts",
+        "default": "./dist/esm/client.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/client.d.ts",
+        "default": "./dist/commonjs/client.js"
+      }
+    },
+    "./server": {
+      "import": {
+        "types": "./dist/esm/server.d.ts",
+        "default": "./dist/esm/server.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/server.d.ts",
+        "default": "./dist/commonjs/server.js"
+      }
+    }
   },
   "type": "module",
   "scripts": {
@@ -54,5 +87,7 @@
   "tap": {
     "coverage-map": "./map.js",
     "before": "./test/before.ts"
-  }
+  },
+  "main": "./dist/commonjs/index.js",
+  "types": "./dist/commonjs/index.d.ts"
 }
