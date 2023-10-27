@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { readFileSync, writeFileSync } from 'fs'
+import { readFileSync, utimesSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 import { rimraf } from 'rimraf'
 import { message } from 'socket-post-message'
@@ -45,6 +45,7 @@ t.test('instantiate server', t => {
     socket,
     logFile,
     pidFile,
+    mtimeFile,
   } = server
   t.equal(idleTimeout, 6969)
   t.equal(connectionTimeout, 420)
@@ -52,6 +53,7 @@ t.test('instantiate server', t => {
   t.equal(path, resolve('.test-service/daemon'))
   t.equal(logFile, resolve('.test-service/daemon/log'))
   t.equal(pidFile, resolve('.test-service/daemon/pid'))
+  t.equal(mtimeFile, resolve('.test-service/daemon/mtime'))
   t.equal(server.server, undefined)
   t.end()
 })
@@ -89,20 +91,20 @@ t.test('spin up a server and ask it a question', async t => {
 })
 
 t.test('spin up daemon, then defer to running daemon', async t => {
-  const d1 = spawn(process.execPath, [
-    ...process.execArgv,
-    daemon,
-    'defer test 1',
-  ], { stdio: ['ignore', 'pipe', 'ignore'] })
+  const d1 = spawn(
+    process.execPath,
+    [...process.execArgv, daemon, 'defer test 1'],
+    { stdio: ['ignore', 'pipe', 'ignore'] }
+  )
   const out1: Buffer[] = []
   d1.stdout.on('data', c => out1.push(c))
   await new Promise<void>(r => d1.stdout.once('data', () => r()))
   await new Promise<void>(r => setTimeout(r, 100))
-  const d2 = spawn(process.execPath, [
-    ...process.execArgv,
-    daemon,
-    'defer test 2',
-  ], { stdio: ['ignore', 'pipe', 'ignore'] })
+  const d2 = spawn(
+    process.execPath,
+    [...process.execArgv, daemon, 'defer test 2'],
+    { stdio: ['ignore', 'pipe', 'ignore'] }
+  )
   const out2: Buffer[] = []
   d2.stdout.on('data', c => out2.push(c))
   await new Promise<void>(r => d2.stdout.once('data', () => r()))
@@ -266,4 +268,31 @@ t.test('abort request', async t => {
   await Promise.all([t.rejects(p), t.rejects(p2)])
   c.clear()
   c.disconnect()
+})
+
+t.test('kill server', async t => {
+  const c = new TestClient()
+  // no-op, not running
+  await c.kill()
+  // make one request to do ping and verify connection
+  t.equal(
+    await c.fooIntoBar('foo', new AbortController().signal),
+    'bar: foo'
+  )
+  t.equal(c.connected, true)
+  await c.kill()
+  t.equal(c.connected, false)
+})
+
+t.test('restart service if daemonScript is modified', async t => {
+  const c = new TestClient()
+  t.equal(await c.fooIntoBar('foo'), 'bar: foo')
+  t.equal(await c.fooIntoBar('foo 2'), 'bar: foo 2')
+  t.strictSame(c.requests, [], 'nothing pending')
+  t.equal(c.connected, true, 'connected')
+  const connBefore = c.connection
+  const d = new Date()
+  utimesSync(daemon, d, d)
+  t.equal(await c.fooIntoBar('foo 3'), 'bar: foo 3')
+  t.not(c.connection, connBefore)
 })

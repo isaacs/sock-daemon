@@ -35,7 +35,9 @@ export abstract class SockDaemonServer<
   #socket: string
   #pidFile: string
   #logFile: string
+  #mtimeFile: string
   #didOnExit = false
+  #daemonScript?: string
 
   constructor(options: SockDaemonServerOptions = {}) {
     this.#name = (
@@ -54,8 +56,11 @@ export abstract class SockDaemonServer<
       this.#socket = resolve('//?/pipe/' + this.#socket)
     }
     /* c8 ignore stop */
+    this.#mtimeFile = resolve(this.#path, 'mtime')
     this.#pidFile = resolve(this.#path, 'pid')
     this.#logFile = resolve(this.#path, 'log')
+    this.#daemonScript =
+      process.env[`SOCK_DAEMON_SCRIPT_${this.#name}`]
   }
 
   get idleTimeout() {
@@ -75,6 +80,9 @@ export abstract class SockDaemonServer<
   }
   get pidFile() {
     return this.#pidFile
+  }
+  get mtimeFile() {
+    return this.#mtimeFile
   }
   get server() {
     return this.#server
@@ -210,6 +218,23 @@ export abstract class SockDaemonServer<
   async listen() {
     console.error('listen')
     await mkdirp(this.#path)
+    // if we have a script filename, and the mtimeFile is present,
+    // and mtimeFile does not match the mtime of the script filename,
+    // then we MUST restart.
+    if (this.#daemonScript) {
+      const [mtimeExpect, mtimeActual] = await Promise.all([
+        readFile(this.#mtimeFile)
+          .then(s => Number(s) || undefined)
+          .catch(() => undefined),
+        stat(this.#daemonScript)
+          .then(st => Number(st.mtime))
+          .catch(undefined),
+      ])
+      if (mtimeExpect && mtimeActual && mtimeExpect !== mtimeActual) {
+        await this.#killFormerPid('SIGHUP')
+      }
+    }
+
     const server = createServer(conn => {
       this.#idleTick()
       const messageHost = socketPostMessage(conn)
@@ -294,7 +319,16 @@ export abstract class SockDaemonServer<
     this.#server = server
     server.removeAllListeners('error')
     await this.#killFormerPid()
-    await writeFile(this.#pidFile, String(process.pid))
+    await Promise.all([
+      writeFile(this.#pidFile, String(process.pid)),
+      this.#daemonScript
+        ? stat(this.#daemonScript)
+            .then(st =>
+              writeFile(this.#mtimeFile, String(Number(st.mtime)))
+            )
+            .catch(() => {})
+        : undefined,
+    ])
     reportReady('READY')
     console.error('daemon ready')
     // convenience while testing.

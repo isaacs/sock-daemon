@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
 import { constants, openSync } from 'fs'
+import { readFile, stat, unlink } from 'fs/promises'
 import { mkdirp } from 'mkdirp'
 import { connect, Socket } from 'net'
 import { resolve } from 'path'
@@ -92,16 +93,30 @@ export abstract class SockDaemonClient<
   #socket: string
   #logFile: string
   #pidFile: string
+  #mtimeFile: string
+  #serviceName: string
+  #daemonScript: string
 
   #didPing = false
   #ping?: Ping
   #pingTimer?: NodeJS.Timeout
 
   constructor() {
-    const svc = (this.constructor as typeof SockDaemonClient)
-      .serviceName
-    this.#path = resolve(`.${svc}/daemon`)
+    this.#serviceName = (
+      this.constructor as typeof SockDaemonClient
+    ).serviceName
+    this.#path = resolve(`.${this.#serviceName}/daemon`)
     this.#socket = resolve(this.#path, 'socket')
+    const { daemonScript } = this
+      .constructor as typeof SockDaemonClient
+    /* c8 ignore start */
+    const s =
+      typeof daemonScript === 'object' ||
+      daemonScript.startsWith('file://')
+        ? fileURLToPath(daemonScript)
+        : daemonScript
+    /* c8 ignore stop */
+    this.#daemonScript = s
     /* c8 ignore start */
     if (isWindows) {
       this.#socket = resolve('//?/pipe/' + this.#socket)
@@ -109,6 +124,39 @@ export abstract class SockDaemonClient<
     /* c8 ignore stop */
     this.#logFile = resolve(this.#path, 'log')
     this.#pidFile = resolve(this.#path, 'pid')
+    this.#mtimeFile = resolve(this.#path, 'mtime')
+  }
+
+  /**
+   * Kill the server, if it is running.
+   * Attempts to send a SIGHUP to allow for graceful shutdown, but this
+   * is not possible on Windows.
+   */
+  async kill() {
+    const ps = await readFile(this.#pidFile, 'utf8').catch(
+      () => undefined
+    )
+    if (!ps) return
+    this.disconnect()
+    const { stackTraceLimit } = Error
+    Error.stackTraceLimit = 0
+    let sigRes: boolean = false
+    /* c8 ignore start */
+    if (!isWindows) {
+      try {
+        sigRes = process.kill(Number(ps), 'SIGHUP')
+      } catch {}
+    }
+    if (isWindows || sigRes) {
+      try {
+        sigRes = process.kill(Number(ps), 'SIGTERM')
+      } catch {}
+    }
+    /* c8 ignore stop */
+    Error.stackTraceLimit = stackTraceLimit
+    if (sigRes) {
+      await new Promise<void>(r => setTimeout(r, 50))
+    }
   }
 
   /**
@@ -201,19 +249,51 @@ export abstract class SockDaemonClient<
       }
     )
     this.#requests.set(id, cr)
-    if (!this.#connected) {
-      /* c8 ignore next */
-      if (!this.#connection?.connecting) this.#connect()
+    this.#checkMtime().then(() => {
+      if (!this.#requests.has(id)) return
+      if (!this.#connected) {
+        /* c8 ignore next */
+        if (!this.#connection?.connecting) this.#connect()
+      } else {
+        const [head, body] = message(request)
+        this.#connection!.write(head)
+        this.#connection!.write(body)
+      }
+    })
+    return await cr.promise
+  }
+
+  #mtimeCheckP?: Promise<boolean>
+  async #checkMtime(): Promise<boolean> {
+    if (this.#mtimeCheckP) return this.#mtimeCheckP
+    let resolve!: (b: boolean) => void
+    this.#mtimeCheckP = new Promise<boolean>(r => (resolve = r))
+    const [mtimeExpect, mtimeActual] = await Promise.all([
+      readFile(this.#mtimeFile)
+        /* c8 ignore next */
+        .then(s => Number(s) || undefined)
+        .catch(() => undefined),
+      stat(this.#daemonScript)
+        .then(st => Number(st.mtime))
+        .catch(undefined),
+    ])
+    if (mtimeExpect && mtimeActual && mtimeExpect !== mtimeActual) {
+      await Promise.all([
+        unlink(this.#mtimeFile).catch(() => {}),
+        this.kill(),
+      ])
+      resolve(true)
+      this.#mtimeCheckP = undefined
+      return true
     } else {
-      const [head, body] = message(request)
-      this.#connection!.write(head)
-      this.#connection!.write(body)
+      resolve(false)
+      this.#mtimeCheckP = undefined
+      return false
     }
-    return cr.promise
   }
 
   async #connect() {
-    await mkdirp(this.#path)
+    await Promise.all([mkdirp(this.#path), this.#checkMtime()])
     this.#reader = new Reader()
     const connection = connect(this.#socket, () => {
       this.#connected = true
@@ -258,31 +338,31 @@ export abstract class SockDaemonClient<
       this.disconnect()
       if (er.code === 'ENOENT') {
         // start daemon
-        const { daemonScript } = this
-          .constructor as typeof SockDaemonClient
-        /* c8 ignore start */
-        const s =
-          typeof daemonScript === 'object' ||
-          daemonScript.startsWith('file://')
-            ? fileURLToPath(daemonScript)
-            : daemonScript
-        /* c8 ignore stop */
         const ea = process.execArgv
-        const d = spawn(process.execPath, [...ea, s], {
-          stdio: [
-            'ignore',
-            'pipe',
-            //'inherit',
-            //'pipe',
-            openSync(
-              this.#logFile,
-              constants.O_APPEND |
-                constants.O_CREAT |
-                constants.O_WRONLY
-            ),
-          ],
-          detached: true,
-        })
+        const d = spawn(
+          process.execPath,
+          [...ea, this.#daemonScript],
+          {
+            env: {
+              ...process.env,
+              [`SOCK_DAEMON_SCRIPT_${this.#serviceName}`]:
+                this.#daemonScript,
+            },
+            stdio: [
+              'ignore',
+              'pipe',
+              //'inherit',
+              //'pipe',
+              openSync(
+                this.#logFile,
+                constants.O_APPEND |
+                  constants.O_CREAT |
+                  constants.O_WRONLY
+              ),
+            ],
+            detached: true,
+          }
+        )
         /* c8 ignore start */
         d.stderr?.on('data', c => process.stderr.write(c))
         /* c8 ignore stop */
