@@ -71,6 +71,10 @@ export class ClientRequest<
   }
 }
 
+export interface SockDaemonClientOptions {
+  execArgv?: string[]
+}
+
 /**
  * Override this class to create a Client that can talk to the
  * SockDaemonServer you've created.
@@ -100,8 +104,10 @@ export abstract class SockDaemonClient<
   #didPing = false
   #ping?: Ping
   #pingTimer?: NodeJS.Timeout
+  #execArgv: string[]
 
-  constructor() {
+  constructor({ execArgv = [] }: SockDaemonClientOptions = {}) {
+    this.#execArgv = execArgv
     this.#serviceName = (
       this.constructor as typeof SockDaemonClient
     ).serviceName
@@ -176,6 +182,13 @@ export abstract class SockDaemonClient<
     throw new Error(
       `${this.constructor.name} class must define static 'daemonScript' getter`
     )
+  }
+
+  /**
+   * The execArgv that is used when spawning the daemon script.
+   */
+  get execArgv() {
+    return this.#execArgv
   }
 
   /**
@@ -338,7 +351,7 @@ export abstract class SockDaemonClient<
       this.disconnect()
       if (er.code === 'ENOENT') {
         // start daemon
-        const ea = process.execArgv
+        const ea = this.#execArgv
         const d = spawn(
           process.execPath,
           [...ea, this.#daemonScript],

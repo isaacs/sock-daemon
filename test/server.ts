@@ -61,6 +61,7 @@ t.test('instantiate server', t => {
 t.test('instantiate client', t => {
   const client = new TestClient()
   const {
+    execArgv,
     path,
     socket,
     logFile,
@@ -69,6 +70,8 @@ t.test('instantiate client', t => {
     connected,
     requests,
   } = client
+  // we set this to the process's execArgv so that we can run ts
+  t.equal(execArgv, process.execArgv)
   t.equal(socket, socketPath)
   t.equal(path, resolve('.test-service/daemon'))
   t.equal(logFile, resolve('.test-service/daemon/log'))
