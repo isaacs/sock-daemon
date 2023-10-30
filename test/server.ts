@@ -277,10 +277,13 @@ t.test('kill server', async t => {
   const c = new TestClient()
   // no-op, not running
   await c.kill()
-  t.match(
-    await c.ping(),
-    { PING: 'PONG', id: String },
-  )
+  t.match(await c.ping(), {
+    PING: 'PONG',
+    id: String,
+    pid: Number,
+    duration: Number,
+    sent: Number,
+  })
   t.equal(c.connected, true)
   await c.kill()
   t.equal(c.connected, false)

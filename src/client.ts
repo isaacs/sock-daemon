@@ -6,7 +6,7 @@ import { connect, Socket } from 'net'
 import { resolve } from 'path'
 import { message, Reader } from 'socket-post-message'
 import { fileURLToPath } from 'url'
-import { isPong, ping, Ping } from './ping.js'
+import { isPing, isPong, ping, Ping, Pong } from './ping.js'
 import type { MessageBase } from './server.js'
 
 const pid = process.pid
@@ -61,6 +61,10 @@ export class ClientRequest<
   resolve(r: Response) {
     /* c8 ignore next */
     if (!this.#resolve) return
+    const q = this.request
+    if (isPing(q) && isPong(r, q)) {
+      Object.assign(r, { duration: performance.now() - q.sent })
+    }
     this.#onFinish()
     const resolve = this.#resolve
     this.response = r
@@ -137,8 +141,8 @@ export abstract class SockDaemonClient<
    * Send a PING message to the server. This can be useful when you want
    * to start the daemon, without making any specific request.
    */
-  async ping() {
-    return this.request({ PING: 'PING' })
+  async ping(): Promise<Pong & { duration: number }> {
+    return await this.request(ping())
   }
 
   /**
@@ -255,9 +259,17 @@ export abstract class SockDaemonClient<
    * it has not already been resolved.
    */
   async request(
-    msg: Omit<Request, 'id'> & { id?: string } | Omit<Ping, 'id'>,
+    msg: Omit<Ping, 'id'>,
     signal?: AbortSignal
-  ): Promise<Response> {
+  ): Promise<Pong & { duration: number }>
+  async request(
+    msg: Omit<Request, 'id'>,
+    signal?: AbortSignal
+  ): Promise<Response>
+  async request(
+    msg: (Omit<Request, 'id'> & { id?: string }) | Omit<Ping, 'id'>,
+    signal?: AbortSignal
+  ): Promise<Response | (Pong & { duration: number })> {
     this.#connection?.ref()
     const id = `${this.#clientID}-${this.#msgID++}`
     const request = { ...msg, id } as Request
