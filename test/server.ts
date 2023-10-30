@@ -277,10 +277,9 @@ t.test('kill server', async t => {
   const c = new TestClient()
   // no-op, not running
   await c.kill()
-  // make one request to do ping and verify connection
-  t.equal(
-    await c.fooIntoBar('foo', new AbortController().signal),
-    'bar: foo'
+  t.match(
+    await c.ping(),
+    { PING: 'PONG', id: String },
   )
   t.equal(c.connected, true)
   await c.kill()

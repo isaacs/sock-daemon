@@ -134,6 +134,14 @@ export abstract class SockDaemonClient<
   }
 
   /**
+   * Send a PING message to the server. This can be useful when you want
+   * to start the daemon, without making any specific request.
+   */
+  async ping() {
+    return this.request({ PING: 'PING' })
+  }
+
+  /**
    * Kill the server, if it is running.
    * Attempts to send a SIGHUP to allow for graceful shutdown, but this
    * is not possible on Windows.
@@ -247,7 +255,7 @@ export abstract class SockDaemonClient<
    * it has not already been resolved.
    */
   async request(
-    msg: Omit<Request, 'id'> & { id?: string },
+    msg: Omit<Request, 'id'> & { id?: string } | Omit<Ping, 'id'>,
     signal?: AbortSignal
   ): Promise<Response> {
     this.#connection?.ref()
@@ -389,9 +397,9 @@ export abstract class SockDaemonClient<
       if (this.#ping && isPong(msg, this.#ping)) {
         this.#didPing = true
         clearTimeout(this.#pingTimer)
-        /* c8 ignore next */
-      } else if (isPong(msg)) continue
-      const valid = this.isResponse(msg)
+      }
+      const valid = this.isResponse(msg) || isPong(msg)
+      /* c8 ignore next */
       if (!valid) continue
       const cr = this.#requests.get(msg.id)
       if (cr) {
