@@ -7,7 +7,7 @@ Handles automatically starting the daemon service (but only one
 of them), logging to a file, and serializing messages over a
 domain socket on unix systems or named pipe on Windows.
 
-<img src="./sock-daemon.svg" alt="two cartoon socks with devil tails and horns" height="320" width="320">
+<img src="https://raw.githubusercontent.com/isaacs/sock-daemon/main/sock-daemon.svg" alt="two cartoon socks with devil tails and horns" height="320" width="320">
 
 ## USAGE
 
