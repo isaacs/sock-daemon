@@ -15,6 +15,10 @@ const isWindows = process.platform === 'win32'
 
 /**
  * Class representing a single request from the SockDaemonClient
+ *
+ * Created by {@link SockDaemonClient#request}
+ *
+ * @internal
  */
 export class ClientRequest<
   Request extends MessageBase,
@@ -25,14 +29,35 @@ export class ClientRequest<
   #signal?: AbortSignal
   #onAbort: (er: any) => void
   #onFinish: () => void
+  /**
+   * The response returned by the Daemon, if resolved
+   */
   response?: Response
+  /**
+   * The request sent to the Daemon
+   */
   request: Request
+  /**
+   * Promise which resolves when the response is received
+   */
   promise: Promise<Response>
+  /**
+   * Message ID request/response
+   */
   id: string
 
   constructor(
+    /**
+     * Request to be sent
+     */
     request: Request,
+    /**
+     * Signal to abort the request
+     */
     signal: AbortSignal | undefined,
+    /**
+     * Called on either success or failure
+     */
     onFinish: () => void
   ) {
     this.request = request
@@ -47,6 +72,9 @@ export class ClientRequest<
     signal?.addEventListener('abort', this.#onAbort)
   }
 
+  /**
+   * Cancel the request and fail the promise
+   */
   reject(er: any) {
     /* c8 ignore next */
     if (!this.#reject) return
@@ -58,6 +86,9 @@ export class ClientRequest<
     reject(er)
   }
 
+  /**
+   * Resolve the request with a response
+   */
   resolve(r: Response) {
     /* c8 ignore next */
     if (!this.#resolve) return
@@ -75,7 +106,13 @@ export class ClientRequest<
   }
 }
 
+/**
+ * Options provided to SockDaemonClient constructor
+ */
 export interface SockDaemonClientOptions {
+  /**
+   * The execArgv used when spawning the daemonScript. Defaults to []
+   */
   execArgv?: string[]
 }
 
@@ -147,6 +184,7 @@ export abstract class SockDaemonClient<
 
   /**
    * Kill the server, if it is running.
+   *
    * Attempts to send a SIGHUP to allow for graceful shutdown, but this
    * is not possible on Windows.
    */
@@ -217,22 +255,44 @@ export abstract class SockDaemonClient<
     return this.#connected
   }
 
+  /**
+   * The folder where this daemon service stores stuff
+   */
   get path() {
     return this.#path
   }
+
+  /**
+   * Path to the socket used by this service
+   */
   get socket() {
     return this.#socket
   }
+
+  /**
+   * Path where daemon logs are written
+   */
   get logFile() {
     return this.#logFile
   }
+
+  /**
+   * File containing the daemon process ID
+   */
   get pidFile() {
     return this.#pidFile
   }
+
+  /**
+   * True if the client is currently connected
+   */
   get connection() {
     return this.#connection
   }
 
+  /**
+   * Returns true if the object is a {@link MessageBase}
+   */
   isMessage(msg: any): msg is MessageBase {
     return (
       !!msg &&

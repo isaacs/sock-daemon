@@ -12,16 +12,34 @@ import { reportReady } from './report-ready.js'
 const cwd = process.cwd()
 const isWindows = process.platform === 'win32'
 
+/**
+ * Object which can be serialized, and has an id string
+ */
 export interface MessageBase
   extends Record<string, Serializable | null | undefined> {
   id: string
 }
 
+/**
+ * Options for the SockDaemonServer constructor
+ */
 export interface SockDaemonServerOptions {
+  /**
+   * Time in milliseconds before the daemon will close if no requests
+   * are received. Defaults to `3_600_000` (1 hour)
+   */
   idleTimeout?: number
+  /**
+   * Time in milliseconds before a connection will be disconnected if
+   * it does not make any requests. Defaults to `1000` (1 second)
+   */
   connectionTimeout?: number
 }
 
+/**
+ * Extend this class to create a SockDaemonService that is used by your
+ * daemonScript program to service requests.
+ */
 export abstract class SockDaemonServer<
   Request extends MessageBase = MessageBase,
   Response extends MessageBase = MessageBase
@@ -63,27 +81,61 @@ export abstract class SockDaemonServer<
       process.env[`SOCK_DAEMON_SCRIPT_${this.#name}`]
   }
 
+  /**
+   * Time in milliseconds before the daemon will close if no requests
+   * are received. Defaults to `3_600_000` (1 hour)
+   */
   get idleTimeout() {
     return this.#idleTimeout
   }
+
+  /**
+   * Time in milliseconds before a connection will be disconnected if
+   * it does not make any requests. Defaults to `1000` (1 second)
+   */
   get connectionTimeout() {
     return this.#connectionTimeout
   }
+
+  /**
+   * The folder where this daemon service stores stuff
+   */
   get path() {
     return this.#path
   }
+
+  /**
+   * Path to the socket used by this service
+   */
   get socket() {
     return this.#socket
   }
+
+  /**
+   * Path where daemon logs are written
+   */
   get logFile() {
     return this.#logFile
   }
+
+  /**
+   * File containing the daemon process ID
+   */
   get pidFile() {
     return this.#pidFile
   }
+
+  /**
+   * File containing the numeric mtime of the daemon script, so that it
+   * can be restarted on change.
+   */
   get mtimeFile() {
     return this.#mtimeFile
   }
+
+  /**
+   * When listening, the net.Server object
+   */
   get server() {
     return this.#server
   }
@@ -109,6 +161,9 @@ export abstract class SockDaemonServer<
     this.#idleTimer.unref()
   }
 
+  /**
+   * Stop listening for requests and close the socket.
+   */
   close() {
     /* c8 ignore next */
     if (!this.#server) return
@@ -121,6 +176,9 @@ export abstract class SockDaemonServer<
     } catch {}
   }
 
+  /**
+   * Check if the supplied object is a MessageBase
+   */
   isMessage(msg: any): msg is MessageBase {
     return (
       !!msg &&
