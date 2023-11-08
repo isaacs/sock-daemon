@@ -459,7 +459,11 @@ export abstract class SockDaemonClient<
         /* c8 ignore start */
         d.stderr?.on('data', c => process.stderr.write(c))
         /* c8 ignore stop */
-        d.stdout!.on('data', () => this.#connect())
+        d.stdout!.on('data', () => {
+          this.#connect()
+          ;(d.stdout as Socket)?.unref?.()
+        })
+        d.unref()
       }
     })
   }
