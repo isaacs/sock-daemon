@@ -31,8 +31,8 @@ export class TestDaemon extends Server<Request, Response> {
 }
 
 export class TestClient extends Client<Request, Response> {
-  constructor () {
-    super({ execArgv: process.execArgv })
+  constructor({ debug = false } = {}) {
+    super({ execArgv: process.execArgv, debug })
   }
   static get serviceName() {
     return 'test-service'

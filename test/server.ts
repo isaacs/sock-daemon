@@ -136,19 +136,19 @@ t.test('spin up daemon, then defer to running daemon', async t => {
   await done
 })
 
-t.test('kill wedged non-server process', async t => {
+t.test('dont touch non-server process with recorded pid', async t => {
   const d = spawn(process.execPath, [
     '-e',
     'setInterval(() => {}, 100000); console.log("READY")',
   ])
   await new Promise<void>(r => d.stdout.on('data', () => r()))
   await new Promise<void>(r => setTimeout(r, 100))
-  writeFileSync('.test-service/daemon/pid', String(d.pid))
+  writeFileSync('.test-service/daemon/pid', String(d.pid) + '\n')
   const exit = new Promise<{
     code: number | null
     signal: NodeJS.Signals | null
   }>(r => d.on('close', (code, signal) => r({ code, signal })))
-  const c = new TestClient()
+  const c = new TestClient({ debug: true })
   const bar = c.fooIntoBar('foo wedge test')
   // just in case, don't hang the test forever
   setTimeout(() => {
@@ -162,7 +162,7 @@ t.test('kill wedged non-server process', async t => {
     await exit,
     isWindows
       ? { code: 1, signal: null }
-      : { code: null, signal: 'SIGTERM' }
+      : { code: null, signal: 'SIGKILL' }
   )
 })
 
@@ -244,6 +244,57 @@ t.test('kill server process that fails ping but writes', async t => {
   )
 })
 
+t.test('kill server process writes non-PONG to ping', async t => {
+  const p = Buffer.concat(message({id: 'xyz', ping: 'not pong!' }))
+  const d = spawn(process.execPath, [
+    '-e',
+    `
+    server = require('net').createServer(c => {
+      c.write(Buffer.from(${
+        JSON.stringify(p.toString('hex'))
+      }, 'hex'))
+    })
+    server.listen(${JSON.stringify(
+      socketPath
+    )}, () => console.log('READY'))
+    try {
+      process.on('SIGHUP', () => {})
+    } catch {}
+    `,
+  ], { stdio: ['ignore', 'pipe', 'inherit' ] })
+  await new Promise<void>(r => d.stdout.on('data', () => r()))
+  await new Promise<void>(r => setTimeout(r, 100))
+  writeFileSync('.test-service/daemon/pid', String(d.pid))
+  const exit = new Promise<{
+    code: number | null
+    signal: NodeJS.Signals | null
+  }>(r => d.on('close', (code, signal) => r({ code, signal })))
+  const c = new TestClient()
+  const c2 = new TestClient()
+  const c3 = new TestClient()
+  const c4 = new TestClient()
+  const bar = c.fooIntoBar('foo unesponsive writing server')
+  const bar2 = c2.fooIntoBar('foo unesponsive writing server')
+  const bar3 = c3.fooIntoBar('foo unesponsive writing server')
+  const bar4 = c4.fooIntoBar('foo unesponsive writing server')
+  // just in case, don't hang the test forever
+  setTimeout(() => {
+    try {
+      d.kill('SIGKILL')
+    } catch {}
+  }, 5000).unref()
+  const response = await Promise.all([bar, bar2, bar3, bar4])
+  const expect = 'bar: foo unesponsive writing server'
+  t.strictSame(response, [expect, expect, expect, expect])
+
+  t.match(
+    await exit,
+    isWindows
+      ? { code: 1, signal: null }
+      : { code: null, signal: 'SIGTERM' }
+  )
+})
+
 t.test('base class stuff', t => {
   const s = SockDaemonServer.prototype
   t.equal(s.isRequest({ id: 'x' }), true)
@@ -300,4 +351,34 @@ t.test('restart service if daemonScript is modified', async t => {
   utimesSync(daemon, d, d)
   t.equal(await c.fooIntoBar('foo 3'), 'bar: foo 3')
   t.not(c.connection, connBefore)
+})
+
+t.test('client kill if daemonScript is modified', async t => {
+  const c = new TestClient()
+  const old = new Date('2020-01-20')
+  utimesSync(TestClient.daemonScript, old, old)
+  writeFileSync(c.mtimeFile, `${old.getTime()}\n`)
+  writeFileSync(c.logFile, '')
+  t.equal(await c.fooIntoBar('foo'), 'bar: foo')
+  t.equal(await c.fooIntoBar('foo 2'), 'bar: foo 2')
+  t.strictSame(c.requests, [], 'nothing pending')
+  t.equal(c.connected, true, 'connected')
+  const { pid: pidBefore } = await c.ping()
+  const neu = new Date()
+  const c2 = new TestClient()
+  const c3 = new TestClient()
+  const c4 = new TestClient()
+  utimesSync(TestClient.daemonScript, neu, neu)
+  const res = await Promise.all([
+    c2.fooIntoBar('usurp'),
+    c3.fooIntoBar('usurp'),
+    c4.fooIntoBar('usurp'),
+  ])
+  t.strictSame(res, ['bar: usurp', 'bar: usurp', 'bar: usurp'])
+  const pidsAfter = await Promise.all(
+    [c2, c3, c4].map(async c => (await c.ping()).pid)
+  )
+  t.not(pidsAfter[0], pidBefore)
+  t.equal(pidsAfter[1], pidsAfter[0])
+  t.equal(pidsAfter[2], pidsAfter[0])
 })
