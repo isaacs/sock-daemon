@@ -114,6 +114,10 @@ export interface SockDaemonClientOptions {
    * The execArgv used when spawning the daemonScript. Defaults to []
    */
   execArgv?: string[]
+  /**
+   * Set `debug: true` to start daemon in debug logging mode
+   */
+  debug?: boolean
 }
 
 /**
@@ -146,9 +150,14 @@ export abstract class SockDaemonClient<
   #ping?: Ping
   #pingTimer?: NodeJS.Timeout
   #execArgv: string[]
+  #debug: boolean
 
-  constructor({ execArgv = [] }: SockDaemonClientOptions = {}) {
+  constructor({
+    debug = false,
+    execArgv = [],
+  }: SockDaemonClientOptions = {}) {
     this.#execArgv = execArgv
+    this.#debug = debug
     this.#serviceName = (
       this.constructor as typeof SockDaemonClient
     ).serviceName
@@ -274,6 +283,13 @@ export abstract class SockDaemonClient<
    */
   get logFile() {
     return this.#logFile
+  }
+
+  /**
+   * Path where the daemonScript mtime is written
+   */
+  get mtimeFile() {
+    return this.#mtimeFile
   }
 
   /**
@@ -438,6 +454,15 @@ export abstract class SockDaemonClient<
           {
             env: {
               ...process.env,
+              /* c8 ignore start */
+              ...(this.#debug && {
+                NODE_DEBUG: `${
+                  process.env.NODE_DEBUG
+                    ? process.env.NODE_DEBUG + ','
+                    : ''
+                }SOCK-DAEMON`,
+              }),
+              /* c8 ignore stop */
               [`SOCK_DAEMON_SCRIPT_${this.#serviceName}`]:
                 this.#daemonScript,
             },
