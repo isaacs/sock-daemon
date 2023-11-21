@@ -227,9 +227,11 @@ export abstract class SockDaemonServer<
     try {
       await this.#startingLock.acquire()
       return this.#listen()
+      /* c8 ignore start */
     } catch {
       return this.#tryConnect(1000)
     }
+    /* c8 ignore stop */
   }
 
   // try to listen, and if we get an EEXIST or EADDRINUSE, then
@@ -273,7 +275,7 @@ export abstract class SockDaemonServer<
       /* c8 ignore stop */
     })
 
-    server.once('error', er => this.#onServerError(er))
+    server.on('error', er => this.#onServerError(er))
     server.listen(this.#socket, () => this.#onListen(server))
 
     if (!this.#didOnExit) {
