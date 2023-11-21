@@ -201,8 +201,8 @@ export abstract class SockDaemonClient<
     const ps = await readFile(this.#pidFile, 'utf8').catch(
       () => undefined
     )
-    if (!ps) return
     this.disconnect()
+    if (!ps) return
     const { stackTraceLimit } = Error
     Error.stackTraceLimit = 0
     let sigRes: boolean = false

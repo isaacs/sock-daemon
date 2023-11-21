@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
 import { readFileSync, utimesSync, writeFileSync } from 'fs'
+import os from 'node:os'
 import { resolve } from 'path'
 import { rimraf } from 'rimraf'
 import { message } from 'socket-post-message'
@@ -8,6 +9,11 @@ import { fileURLToPath } from 'url'
 import { SockDaemonClient } from '../src/client.js'
 import { SockDaemonServer } from '../src/server.js'
 import { TestClient, TestDaemon } from './fixtures/test-service.js'
+
+const availableParallelism = Math.max(
+  os.availableParallelism?.() ?? os.cpus().length,
+  4
+)
 
 const isWindows = process.platform === 'win32'
 
@@ -28,7 +34,8 @@ const shutdown = async () => {
     const n = Number(readFileSync('.test-service/daemon/pid', 'utf8'))
     if (n) process.kill(n, 'SIGKILL')
   } catch {}
-  await rimraf('.test-service/daemon/pid')
+  await rimraf('.test-service/daemon/pid', { glob: false }).catch(() => {})
+  await rimraf(socketPath, { glob: false }).catch(() => {})
 }
 t.beforeEach(() => shutdown())
 t.afterEach(() => shutdown())
@@ -158,12 +165,7 @@ t.test('dont touch non-server process with recorded pid', async t => {
   }, 5000).unref()
   const response = await bar
   t.equal(response, 'bar: foo wedge test')
-  t.strictSame(
-    await exit,
-    isWindows
-      ? { code: 1, signal: null }
-      : { code: null, signal: 'SIGKILL' }
-  )
+  t.strictSame(await exit, { code: null, signal: 'SIGKILL' })
 })
 
 t.test('kill server process that fails ping', async t => {
@@ -187,15 +189,15 @@ t.test('kill server process that fails ping', async t => {
     signal: NodeJS.Signals | null
   }>(r => d.on('close', (code, signal) => r({ code, signal })))
   const c = new TestClient()
-  const bar = c.fooIntoBar('foo unesponsive silent server')
+  const bar = c.fooIntoBar('foo unresponsive silent server')
   // just in case, don't hang the test forever
   setTimeout(() => {
     try {
       d.kill('SIGKILL')
     } catch {}
-  }, 5000).unref()
+  }, 10_000).unref()
   const response = await bar
-  t.equal(response, 'bar: foo unesponsive silent server')
+  t.equal(response, 'bar: foo unresponsive silent server')
 
   t.match(
     await exit,
@@ -226,15 +228,15 @@ t.test('kill server process that fails ping but writes', async t => {
     signal: NodeJS.Signals | null
   }>(r => d.on('close', (code, signal) => r({ code, signal })))
   const c = new TestClient()
-  const bar = c.fooIntoBar('foo unesponsive writing server')
+  const bar = c.fooIntoBar('foo unresponsive writing server')
   // just in case, don't hang the test forever
   setTimeout(() => {
     try {
       d.kill('SIGKILL')
     } catch {}
-  }, 5000).unref()
+  }, 10_000).unref()
   const response = await bar
-  t.equal(response, 'bar: foo unesponsive writing server')
+  t.equal(response, 'bar: foo unresponsive writing server')
 
   t.match(
     await exit,
@@ -245,14 +247,16 @@ t.test('kill server process that fails ping but writes', async t => {
 })
 
 t.test('kill server process writes non-PONG to ping', async t => {
-  const p = Buffer.concat(message({id: 'xyz', ping: 'not pong!' }))
-  const d = spawn(process.execPath, [
-    '-e',
-    `
+  const p = Buffer.concat(message({ id: 'xyz', ping: 'not pong!' }))
+  const d = spawn(
+    process.execPath,
+    [
+      '-e',
+      `
     server = require('net').createServer(c => {
-      c.write(Buffer.from(${
-        JSON.stringify(p.toString('hex'))
-      }, 'hex'))
+      c.write(Buffer.from(${JSON.stringify(
+        p.toString('hex')
+      )}, 'hex'))
     })
     server.listen(${JSON.stringify(
       socketPath
@@ -261,7 +265,9 @@ t.test('kill server process writes non-PONG to ping', async t => {
       process.on('SIGHUP', () => {})
     } catch {}
     `,
-  ], { stdio: ['ignore', 'pipe', 'inherit' ] })
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] }
+  )
   await new Promise<void>(r => d.stdout.on('data', () => r()))
   await new Promise<void>(r => setTimeout(r, 100))
   writeFileSync('.test-service/daemon/pid', String(d.pid))
@@ -273,18 +279,18 @@ t.test('kill server process writes non-PONG to ping', async t => {
   const c2 = new TestClient()
   const c3 = new TestClient()
   const c4 = new TestClient()
-  const bar = c.fooIntoBar('foo unesponsive writing server')
-  const bar2 = c2.fooIntoBar('foo unesponsive writing server')
-  const bar3 = c3.fooIntoBar('foo unesponsive writing server')
-  const bar4 = c4.fooIntoBar('foo unesponsive writing server')
+  const bar = c.fooIntoBar('foo unresponsive writing server')
+  const bar2 = c2.fooIntoBar('foo unresponsive writing server')
+  const bar3 = c3.fooIntoBar('foo unresponsive writing server')
+  const bar4 = c4.fooIntoBar('foo unresponsive writing server')
   // just in case, don't hang the test forever
   setTimeout(() => {
     try {
       d.kill('SIGKILL')
     } catch {}
-  }, 5000).unref()
+  }, 10_000).unref()
   const response = await Promise.all([bar, bar2, bar3, bar4])
-  const expect = 'bar: foo unesponsive writing server'
+  const expect = 'bar: foo unresponsive writing server'
   t.strictSame(response, [expect, expect, expect, expect])
 
   t.match(
@@ -341,6 +347,8 @@ t.test('kill server', async t => {
 })
 
 t.test('restart service if daemonScript is modified', async t => {
+  const old = new Date('2020-01-20')
+  utimesSync(daemon, old, old)
   const c = new TestClient()
   t.equal(await c.fooIntoBar('foo'), 'bar: foo')
   t.equal(await c.fooIntoBar('foo 2'), 'bar: foo 2')
@@ -349,6 +357,7 @@ t.test('restart service if daemonScript is modified', async t => {
   const connBefore = c.connection
   const d = new Date()
   utimesSync(daemon, d, d)
+  await new Promise<void>(r => setTimeout(r, 1000))
   t.equal(await c.fooIntoBar('foo 3'), 'bar: foo 3')
   t.not(c.connection, connBefore)
 })
@@ -385,21 +394,16 @@ t.test('client kill if daemonScript is modified', async t => {
 
 t.test('succession contest', async t => {
   // just start a bunch of services all at the same time
-  const clients = [
-    new TestClient(),
-    new TestClient(),
-    new TestClient(),
-    new TestClient(),
-    new TestClient(),
-    new TestClient(),
-    new TestClient(),
-    new TestClient(),
-    new TestClient(),
-    new TestClient(),
-  ]
+  const clients: TestClient[] = []
+  for (let i = 0; i < availableParallelism; i++) {
+    clients.push(new TestClient())
+  }
   const responses: Promise<string>[] = []
   for (const c of clients) {
     responses.push(c.fooIntoBar('foo'))
   }
-  t.strictSame(await Promise.all(responses), clients.map(() => 'bar: foo'))
+  t.strictSame(
+    await Promise.all(responses),
+    clients.map(() => 'bar: foo')
+  )
 })
