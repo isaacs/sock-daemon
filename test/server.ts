@@ -382,3 +382,24 @@ t.test('client kill if daemonScript is modified', async t => {
   t.equal(pidsAfter[1], pidsAfter[0])
   t.equal(pidsAfter[2], pidsAfter[0])
 })
+
+t.test('succession contest', async t => {
+  // just start a bunch of services all at the same time
+  const clients = [
+    new TestClient(),
+    new TestClient(),
+    new TestClient(),
+    new TestClient(),
+    new TestClient(),
+    new TestClient(),
+    new TestClient(),
+    new TestClient(),
+    new TestClient(),
+    new TestClient(),
+  ]
+  const responses: Promise<string>[] = []
+  for (const c of clients) {
+    responses.push(c.fooIntoBar('foo'))
+  }
+  t.strictSame(await Promise.all(responses), clients.map(() => 'bar: foo'))
+})
