@@ -6,7 +6,7 @@ jobs:
   build:
     strategy:
       matrix:
-        node-version: [16.x, 18.x, 20.x, 21.x]
+        node-version: [16.x, 18.x, 20.x, 21.1.x]
         platform:
         - ubuntu-latest
         - macos-latest
@@ -14,7 +14,7 @@ jobs:
           - platform: windows-latest
             node-version: 20.x
           - platform: windows-latest
-            node-version: 21.x
+            node-version: 21.1.x
 
       fail-fast: false
 
