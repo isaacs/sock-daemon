@@ -1,6 +1,6 @@
 {
   "name": "sock-daemon",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "license": "BlueOak-1.0.0",
   "files": [
     "dist"
