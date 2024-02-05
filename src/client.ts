@@ -1,7 +1,6 @@
 import { spawn } from 'child_process'
 import { constants, openSync } from 'fs'
-import { readFile, stat, unlink } from 'fs/promises'
-import { mkdirp } from 'mkdirp'
+import { mkdir, readFile, stat, unlink } from 'fs/promises'
 import { connect, Socket } from 'net'
 import { resolve } from 'path'
 import { message, Reader } from 'socket-post-message'
@@ -402,7 +401,10 @@ export abstract class SockDaemonClient<
   }
 
   async #connect() {
-    await Promise.all([mkdirp(this.#path), this.#checkMtime()])
+    await Promise.all([
+      mkdir(this.#path, { recursive: true }),
+      this.#checkMtime(),
+    ])
     this.#reader = new Reader()
     const connection = connect(this.#socket, () => {
       this.#connected = true

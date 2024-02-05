@@ -1,7 +1,6 @@
-import { mkdirp } from 'mkdirp'
 import { Serializable } from 'node:child_process'
 import { unlinkSync } from 'node:fs'
-import { readFile, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { connect, createServer, Server } from 'node:net'
 import { resolve } from 'node:path'
 import { onExit } from 'signal-exit'
@@ -223,7 +222,7 @@ export abstract class SockDaemonServer<
    * Otherwise, start up the server and write process id to the pidFile
    */
   async listen(): Promise<void> {
-    await mkdirp(this.#path)
+    await mkdir(this.#path, { recursive: true })
     try {
       await this.#startingLock.acquire()
       return this.#listen()
